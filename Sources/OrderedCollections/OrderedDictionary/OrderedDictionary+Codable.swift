@@ -28,6 +28,29 @@ extension OrderedDictionary: Encodable where Key: Encodable, Value: Encodable {
   /// - Parameter encoder: The encoder to write data to.
   @inlinable
   public func encode(to encoder: Encoder) throws {
+    // If Key.Type is String
+    if let encDict = self as? OrderedDictionary<String, Value> {
+      var container = encoder.container(keyedBy: AnyCodingKey.self)
+
+      for (key, value) in encDict {
+        try container.encode(value, forKey: .init(stringValue: key))
+      }
+
+      return
+    }
+
+    // If Key.Type conforms to LosslessStringConvertible
+    let losslessKVPairs = compactMap { k, v in (k as? LosslessStringConvertible).map { ($0, v) } }
+    if losslessKVPairs.count == count {
+      var container = encoder.container(keyedBy: AnyCodingKey.self)
+
+      for (key, value) in losslessKVPairs {
+        try container.encode(value, forKey: .init(stringValue: key.description))
+      }
+
+      return
+    }
+
     // Encode contents as an array of alternating key-value pairs.
     var container = encoder.unkeyedContainer()
     for (key, value) in self {
@@ -56,6 +79,37 @@ extension OrderedDictionary: Decodable where Key: Decodable, Value: Decodable {
   /// - Parameter decoder: The decoder to read data from.
   @inlinable
   public init(from decoder: Decoder) throws {
+    // If Key.Type is String
+    if Key.self == String.self {
+      let container = try decoder.container(keyedBy: AnyCodingKey.self)
+      var dict = OrderedDictionary<String, Value>()
+
+      for key in container.allKeys {
+        dict[key.stringValue] = try container.decode(Value.self, forKey: key)
+      }
+
+      self = dict as! Self
+      _checkInvariants()
+      return
+    }
+
+    // If Key.Type conforms to LosslessStringConvertible
+    if let dictKeyType = Key.self as? LosslessStringConvertible.Type {
+      let container = try decoder.container(keyedBy: AnyCodingKey.self)
+      var dict = OrderedDictionary<Key, Value>()
+
+      for key in container.allKeys {
+        guard let dictKey = dictKeyType.init(key.stringValue) else {
+          throw DecodingError.typeMismatch(Key.self, DecodingError.Context(codingPath: container.codingPath + [key], debugDescription: "OrderedDictionary key could not be decoded as required type."))
+        }
+        dict[dictKey as! Key] = try container.decode(Value.self, forKey: key)
+      }
+
+      self = dict
+      _checkInvariants()
+      return
+    }
+
     // We expect to be encoded as an array of alternating key-value pairs.
     var container = try decoder.unkeyedContainer()
 
@@ -83,5 +137,19 @@ extension OrderedDictionary: Decodable where Key: Decodable, Value: Decodable {
       _values.append(value)
     }
     _checkInvariants()
+  }
+}
+
+public struct AnyCodingKey: CodingKey {
+  public let stringValue: String
+
+  public init(stringValue: String) {
+    self.stringValue = stringValue
+  }
+
+  public let intValue: Int? = nil
+
+  public init?(intValue: Int) {
+    nil
   }
 }
